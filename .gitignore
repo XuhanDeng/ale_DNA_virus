@@ -1,0 +1,16 @@
+# macOS
+.DS_Store
+
+# Excluded pipeline files
+Snakefile_runed.smk
+freshwater_viral_conservation_snakemake/
+
+# Databases and large data
+database/
+results/
+log/
+input/
+conda_envs/
+
+# Snakemake internals
+.snakemake/
