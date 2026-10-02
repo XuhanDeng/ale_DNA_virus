@@ -1,0 +1,180 @@
+# Snakemake SLURM profile configuration
+# Generic configuration - users should customize for their system
+samples:
+  - coag
+  - rein
+  - ruw
+
+coassembly_name: "coassembly"
+
+rawdata_dir: "input/rawdata"
+
+
+
+
+
+#parameter setting
+runtime: 2880
+slurm_account: "research-as-bt"
+regular_memory: 3900
+regular_partition: "compute-p1,compute-p2"
+
+high_memory: 16000
+high_partition: "memory"
+
+
+#each step parameter setting
+fastp:
+  threads: 8
+  qualified_quality_phred: 20
+  length_required: 20
+
+bowtie2_build:
+  threads: 2
+
+bowtie2_removal:
+  threads: 4
+
+spades:
+  threads: 16
+  memory: 256
+  k_values: "21,33,55,77,101,121"
+
+seqkit:
+  threads: 4
+  min_length: 300
+  nr_width: 10
+
+checkv:
+  threads: 4
+
+genomad:
+  threads: 16
+
+virsorter2:
+  threads: 16
+  min_length: 5000
+  min_score: 0.5
+  groups: "dsDNAphage,NCLDV,lavidaviridae"
+  database: "database/virsorter2_db"
+
+deepvirfinder:
+  threads: 12
+  min_length: 3000
+  dvf_path: "software/DeepVirFinder/dvf.py"
+  dvf_models: "software/DeepVirFinder/models"
+
+merge_filter:
+  threads: 4
+  vs2_min_score: 0.5
+  vs2_allow_partial: false
+  genomad_exclude_topology: "NONE"
+
+cluster_index_build:
+  threads: 4
+  runtime: 1440
+  mem_mb_per_cpu: 3900
+  partition: "compute-p1,compute-p2"
+
+bowtie2_alignment:
+  threads: 8
+  runtime: 7200
+  mem_mb_per_cpu: 2000
+  partition: "compute-p1,compute-p2"
+
+coverm:
+  threads: 4
+  runtime: 1440
+  mem_mb_per_cpu: 3900
+  partition: "compute-p1,compute-p2"
+
+iphop:
+  threads: 32
+  runtime: 7200
+  mem_mb_per_cpu: 3968
+  partition: "compute-p1,compute-p2"
+  db_download_alias: "iPHoP.latest_rw"
+  db_version: "Jun_2025_pub_rw"
+  database: "database/iphop/Jun_2025_pub_rw"
+
+pharokka:
+  threads: 16
+  runtime: 3440
+  mem_mb_per_cpu: 3900
+  partition: "compute-p1,compute-p2"
+  meta: true
+  gene_predictor: "prodigal-gv"
+  meta_hmm: true
+  multiplot:
+    threads: 48
+    runtime: 7200
+    mem_mb_per_cpu: 3968
+    partition: "compute-p1,compute-p2"
+    min_contig_length: 1500
+    label_hypotheticals: false
+    remove_other_features_labels: false
+    title_size: 20
+    label_size: 8
+    interval: 5000
+    truncate: 20
+    dpi: 600
+    annotations: 1
+
+diamond_vog:
+  threads: 16
+  runtime: 1440
+  mem_mb_per_cpu: 3900
+  partition: "compute-p1,compute-p2"
+  evalue: "1e-5"
+  min_identity: 30
+  min_query_cover: 70
+
+tree_build:
+  threads: 8
+  runtime: 1440
+  mem_mb_per_cpu: 3900
+  partition: "compute-p1,compute-p2"
+  terl_keyword: "terminase large subunit"
+  min_seq_length: 200
+  mafft_maxiterate: 1000
+  iqtree_model: "TEST"
+  iqtree_bootstrap: 1000
+
+
+
+
+
+#database path
+bowtie2_index: "database/T7_ref/GCF_000844825.1_ViralProj14460_genomic.fna"
+checkv_db: "database/checkv-db-v1.5/"
+genomad_db: "database/genomad_db"
+pharokka_db: "database/pharokka_db"
+
+vog:
+  version: "vog236"
+  db_dir: "database/vog_db"
+
+# Script paths
+merge_script: "workflow/scripts/merge_viral_identification.py"
+checkv_filter_script: "workflow/scripts/Second_filter.py"
+checkv_scripts: "workflow/scripts/checkv"
+
+
+executor: slurm
+jobs: 50
+use-conda: true
+conda-prefix: conda_envs  # Will be created in working directory
+rerun-incomplete: true
+printshellcmds: true
+keep-going: true
+
+# Default resources for all jobs
+# Users should modify slurm_account to match their SLURM account
+default-resources:
+  - slurm_account="research-as-bt"
+  - slurm_partition="compute-p1,compute-p2"
+  - runtime=7200
+  - mem_mb_per_cpu=3900
+  - cpus_per_task=8
+
+# Set threads for specific rules

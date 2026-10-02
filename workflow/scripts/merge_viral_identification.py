@@ -94,7 +94,7 @@ def main() -> None:
     vs2_list = filter_vs2(vs2_df, args.vs2_min_score, args.vs2_allow_partial)
     genomad_list = filter_genomad(genomad_df, args.genomad_exclude_topology)
     merged = merge_labels(genomad_list, vs2_list)
-    base_name = os.path.basename(args.vs2).split("_scaffolds_")[0]
+    base_name = os.path.basename(args.genomad).split("_scaffolds_")[0]
     write_outputs(merged, base_name, args.output)
 
 

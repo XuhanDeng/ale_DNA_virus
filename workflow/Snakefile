@@ -1,7 +1,9 @@
-configfile: "profiles/config.yaml"
+configfile: "config/config.yaml"
 
 RENAME_MIN_LENGTH = str(config["seqkit"]["min_length"])
 RENAME_DIR = "rename_" + RENAME_MIN_LENGTH
+COASSEMBLY_NAME = config["coassembly_name"]
+ASSEMBLY_SAMPLES = config["samples"] + [COASSEMBLY_NAME]
 
 rule all:
     input:
@@ -11,13 +13,15 @@ rule all:
         expand("results/11_bowtie2/all_samples/{sample}/{sample}_count.tsv", sample=config["samples"]),
         # Step 20: GeNomad annotation all samples
         "results/12_taxonomy/genomad/all_samples",
-        # Step 21: iPHoP host prediction
-        "results/13_host_prediction/iphop"
+        # Step 24: Abundance calculation for all-contig clusters
+        expand("results/15_all_contig_bowtie2/{sample}/{sample}_TPM.tsv", sample=config["samples"]),
+        expand("results/15_all_contig_bowtie2/{sample}/{sample}_mean.tsv", sample=config["samples"]),
+        expand("results/15_all_contig_bowtie2/{sample}/{sample}_count.tsv", sample=config["samples"])
 # Step 1: Quality control with fastp
 rule fastp_quality_control:
     input:
-        r1="input/{sample}.R1.raw.fastq.gz",
-        r2="input/{sample}.R2.raw.fastq.gz"
+        r1=config["rawdata_dir"] + "/{sample}.R1.fastq.gz",
+        r2=config["rawdata_dir"] + "/{sample}.R2.fastq.gz"
     output:
         r1_paired="results/1_fastp/{sample}/{sample}_1P.fq.gz",
         r2_paired="results/1_fastp/{sample}/{sample}_2P.fq.gz",
@@ -158,6 +162,30 @@ rule fastp_quality_control:
         
 #         echo "T7 removal completed successfully for sample {wildcards.sample}" >> {log.out}
 #         """
+# Step 3b: Pool trimmed reads from all samples for co-assembly
+rule pool_reads_for_coassembly:
+    input:
+        r1=expand("results/1_fastp/{sample}/{sample}_1P.fq.gz", sample=config["samples"]),
+        r2=expand("results/1_fastp/{sample}/{sample}_2P.fq.gz", sample=config["samples"])
+    output:
+        r1="results/1_fastp/" + COASSEMBLY_NAME + "/" + COASSEMBLY_NAME + "_1P.fq.gz",
+        r2="results/1_fastp/" + COASSEMBLY_NAME + "/" + COASSEMBLY_NAME + "_2P.fq.gz"
+    log:
+        out="log/1_fastp/" + COASSEMBLY_NAME + "_pool_reads.log",
+        err="log/1_fastp/" + COASSEMBLY_NAME + "_pool_reads.err"
+    resources:
+        slurm_partition=config["regular_partition"],
+        runtime=config["runtime"],
+        mem_mb_per_cpu=config["regular_memory"],
+        slurm_account=config["slurm_account"]
+    shell:
+        """
+        mkdir -p results/1_fastp/{COASSEMBLY_NAME}
+        mkdir -p log/1_fastp
+        cat {input.r1} > {output.r1} 2> {log.err}
+        cat {input.r2} > {output.r2} 2>> {log.err}
+        """
+
 #Step 4: Assembly with SPAdes
 rule spades_assembly:
     input:
@@ -466,70 +494,72 @@ rule extract_final_viral_sequences:
 
 
 # Step 15a: Cluster individual samples using CheckV method
-rule cluster_per_sample:
-    input:
-        fasta="results/10_cluster/1_filtered_seq/{sample}_filterd_final_vircontig.fasta"
-    output:
-        blast_db=directory("results/10_cluster/3_clustered/per_sample/{sample}/blast_db"),
-        blast_results="results/10_cluster/3_clustered/per_sample/{sample}/{sample}_blast.tsv",
-        ani_results="results/10_cluster/3_clustered/per_sample/{sample}/{sample}_ani.tsv",
-        cluster_results="results/10_cluster/3_clustered/per_sample/{sample}/{sample}_cluster.tsv"
-    conda: "envs/checkv.yaml"
-    threads: 16
-    log:
-        out="log/15_cluster_per_sample/{sample}_cluster_per_sample.log",
-        err="log/15_cluster_per_sample/{sample}_cluster_per_sample.err"
-    resources:
-        slurm_partition="compute",
-        runtime = 7200,
-        mem_mb_per_cpu = 3900,
-        cpus_per_task = 8,
-        slurm_account = config["slurm_account"] 
-    shell:
-        """
-        mkdir -p results/10_cluster/3_clustered/per_sample/{wildcards.sample}
-        mkdir -p log/15_cluster_per_sample
-
-        # Create BLAST database
-        makeblastdb -in {input.fasta} \
-            -dbtype nucl \
-            -out results/10_cluster/3_clustered/per_sample/{wildcards.sample}/{wildcards.sample}_db \
-            >> {log.out} 2>> {log.err}
-
-        # Run BLAST all-vs-all
-        blastn -query {input.fasta} \
-            -db results/10_cluster/3_clustered/per_sample/{wildcards.sample}/{wildcards.sample}_db \
-            -outfmt '6 std qlen slen' \
-            -max_target_seqs 10000 \
-            -out {output.blast_results} \
-            -num_threads {threads} \
-            >> {log.out} 2>> {log.err}
-
-        # Calculate ANI
-        python {config[checkv_scripts]}/anicalc.py \
-            -i {output.blast_results} \
-            -o {output.ani_results} \
-            >> {log.out} 2>> {log.err}
-
-        # Cluster sequences
-        python {config[checkv_scripts]}/aniclust.py \
-            --fna {input.fasta} \
-            --ani {output.ani_results} \
-            --out {output.cluster_results} \
-            --min_ani 95 \
-            --min_tcov 85 \
-            --min_qcov 0 \
-            >> {log.out} 2>> {log.err}
-
-        # Create directory for blast database files and move them
-        mkdir -p {output.blast_db}
-        mv results/10_cluster/3_clustered/per_sample/{wildcards.sample}/{wildcards.sample}_db.* {output.blast_db}/
-        """
+# NOTE: disabled — downstream consumer (extract_representatives_per_sample) is also
+# disabled below, so this rule's output is never used by anything in the pipeline.
+# rule cluster_per_sample:
+#     input:
+#         fasta="results/10_cluster/1_filtered_seq/{sample}_filterd_final_vircontig.fasta"
+#     output:
+#         blast_db=directory("results/10_cluster/3_clustered/per_sample/{sample}/blast_db"),
+#         blast_results="results/10_cluster/3_clustered/per_sample/{sample}/{sample}_blast.tsv",
+#         ani_results="results/10_cluster/3_clustered/per_sample/{sample}/{sample}_ani.tsv",
+#         cluster_results="results/10_cluster/3_clustered/per_sample/{sample}/{sample}_cluster.tsv"
+#     conda: "envs/checkv.yaml"
+#     threads: 16
+#     log:
+#         out="log/15_cluster_per_sample/{sample}_cluster_per_sample.log",
+#         err="log/15_cluster_per_sample/{sample}_cluster_per_sample.err"
+#     resources:
+#         slurm_partition="compute",
+#         runtime = 7200,
+#         mem_mb_per_cpu = 3900,
+#         cpus_per_task = 8,
+#         slurm_account = config["slurm_account"]
+#     shell:
+#         """
+#         mkdir -p results/10_cluster/3_clustered/per_sample/{wildcards.sample}
+#         mkdir -p log/15_cluster_per_sample
+#
+#         # Create BLAST database
+#         makeblastdb -in {input.fasta} \
+#             -dbtype nucl \
+#             -out results/10_cluster/3_clustered/per_sample/{wildcards.sample}/{wildcards.sample}_db \
+#             >> {log.out} 2>> {log.err}
+#
+#         # Run BLAST all-vs-all
+#         blastn -query {input.fasta} \
+#             -db results/10_cluster/3_clustered/per_sample/{wildcards.sample}/{wildcards.sample}_db \
+#             -outfmt '6 std qlen slen' \
+#             -max_target_seqs 10000 \
+#             -out {output.blast_results} \
+#             -num_threads {threads} \
+#             >> {log.out} 2>> {log.err}
+#
+#         # Calculate ANI
+#         python {config[checkv_scripts]}/anicalc.py \
+#             -i {output.blast_results} \
+#             -o {output.ani_results} \
+#             >> {log.out} 2>> {log.err}
+#
+#         # Cluster sequences
+#         python {config[checkv_scripts]}/aniclust.py \
+#             --fna {input.fasta} \
+#             --ani {output.ani_results} \
+#             --out {output.cluster_results} \
+#             --min_ani 95 \
+#             --min_tcov 85 \
+#             --min_qcov 0 \
+#             >> {log.out} 2>> {log.err}
+#
+#         # Create directory for blast database files and move them
+#         mkdir -p {output.blast_db}
+#         mv results/10_cluster/3_clustered/per_sample/{wildcards.sample}/{wildcards.sample}_db.* {output.blast_db}/
+#         """
 
 # Step 15b: Cluster all samples using CheckV method
 rule cluster_all_samples:
     input:
-        expand("results/10_cluster/1_filtered_seq/{sample}_filterd_final_vircontig.fasta", sample=config["samples"])
+        expand("results/10_cluster/1_filtered_seq/{sample}_filterd_final_vircontig.fasta", sample=ASSEMBLY_SAMPLES)
     output:
         combined="results/10_cluster/2_combined/all_samples_combined.fasta",
         blast_db=directory("results/10_cluster/3_clustered/blast_db"),
@@ -1008,31 +1038,232 @@ rule genomad_annotate_all_samples:
             > {log.out} 2> {log.err}
         """
 
-
-
-# Step 21: iPHoP host prediction
-rule iphop_host_prediction:
+# Step 22: Combine all renamed assemblies (unfiltered, all contigs) for clustering
+rule combine_all_contigs:
     input:
-        representatives="results/10_cluster/4_cluster_fasta/all_samples_cluster_representatives.fasta"
+        expand("results/4_rename_assembly/" + RENAME_DIR + "/{sample}_scaffolds_rename_" + RENAME_MIN_LENGTH + ".fasta", sample=ASSEMBLY_SAMPLES)
     output:
-        directory("results/13_host_prediction/iphop")
-    conda: "envs/iphop.yaml"
+        combined="results/14_all_contig_cluster/1_combined/all_contigs_combined.fasta"
     log:
-        out="log/21_iphop/iphop_host_prediction.log",
-        err="log/21_iphop/iphop_host_prediction.err"
-    threads: config["iphop"]["threads"]
+        out="log/22_combine_all_contigs/combine_all_contigs.log",
+        err="log/22_combine_all_contigs/combine_all_contigs.err"
     resources:
         slurm_partition=config["regular_partition"],
         runtime=config["runtime"],
         mem_mb_per_cpu=config["regular_memory"],
-        cpus_per_task=config["iphop"]["threads"],
         slurm_account=config["slurm_account"]
-    params:
-        db=config["iphop"]["database"]
     shell:
         """
-        mkdir -p results/13_host_prediction
-        mkdir -p log/21_iphop
-        iphop predict --fa_file {input.representatives} --out_dir {output} --db_dir {params.db} -t {threads} \
+        mkdir -p results/14_all_contig_cluster/1_combined
+        mkdir -p log/22_combine_all_contigs
+        cat {input} > {output.combined} 2> {log.err}
+        """
+
+# Step 23a: Cluster all contigs using CheckV method (same standard as viral cluster)
+rule cluster_all_contigs:
+    input:
+        combined="results/14_all_contig_cluster/1_combined/all_contigs_combined.fasta"
+    output:
+        blast_db=directory("results/14_all_contig_cluster/2_clustered/blast_db"),
+        blast_results="results/14_all_contig_cluster/2_clustered/all_contigs_blast.tsv",
+        ani_results="results/14_all_contig_cluster/2_clustered/all_contigs_ani.tsv",
+        cluster_results="results/14_all_contig_cluster/2_clustered/all_contigs_cluster.tsv"
+    conda: "envs/checkv.yaml"
+    threads: 16
+    log:
+        out="log/23_cluster_all_contigs/cluster_all_contigs.log",
+        err="log/23_cluster_all_contigs/cluster_all_contigs.err"
+    resources:
+        slurm_partition="compute",
+        runtime=7200,
+        mem_mb_per_cpu=3900,
+        cpus_per_task=16,
+        slurm_account=config["slurm_account"]
+    shell:
+        """
+        mkdir -p results/14_all_contig_cluster/2_clustered
+        mkdir -p log/23_cluster_all_contigs
+
+        # Create BLAST database
+        makeblastdb -in {input.combined} \
+            -dbtype nucl \
+            -out results/14_all_contig_cluster/2_clustered/all_contigs_db \
+            >> {log.out} 2>> {log.err}
+
+        # Run BLAST all-vs-all
+        blastn -query {input.combined} \
+            -db results/14_all_contig_cluster/2_clustered/all_contigs_db \
+            -outfmt '6 std qlen slen' \
+            -max_target_seqs 10000 \
+            -out {output.blast_results} \
+            -num_threads {threads} \
+            >> {log.out} 2>> {log.err}
+
+        # Calculate ANI
+        python {config[checkv_scripts]}/anicalc.py \
+            -i {output.blast_results} \
+            -o {output.ani_results} \
+            >> {log.out} 2>> {log.err}
+
+        # Cluster sequences (same thresholds as viral cluster_all_samples)
+        python {config[checkv_scripts]}/aniclust.py \
+            --fna {input.combined} \
+            --ani {output.ani_results} \
+            --out {output.cluster_results} \
+            --min_ani 95 \
+            --min_tcov 85 \
+            --min_qcov 0 \
+            >> {log.out} 2>> {log.err}
+
+        # Create directory for blast database files
+        mkdir -p {output.blast_db}
+        mv results/14_all_contig_cluster/2_clustered/all_contigs_db.* {output.blast_db}/
+        """
+
+# Step 23b: Extract representative sequences for all-contig clusters
+rule extract_all_contig_representatives:
+    input:
+        combined="results/14_all_contig_cluster/1_combined/all_contigs_combined.fasta",
+        cluster_results="results/14_all_contig_cluster/2_clustered/all_contigs_cluster.tsv"
+    output:
+        representatives="results/14_all_contig_cluster/3_cluster_fasta/all_contigs_cluster_representatives.fasta"
+    conda: "envs/seqkit.yaml"
+    log:
+        out="log/23_cluster_all_contigs/extract_all_contig_representatives.log",
+        err="log/23_cluster_all_contigs/extract_all_contig_representatives.err"
+    resources:
+        slurm_partition="compute",
+        runtime=240,
+        mem_mb_per_cpu=3000,
+        cpus_per_task=2,
+        slurm_account=config["slurm_account"]
+    shell:
+        """
+        mkdir -p results/14_all_contig_cluster/3_cluster_fasta
+        mkdir -p log/23_cluster_all_contigs
+
+        # Extract representative sequences (cluster centroids)
+        cut -f 1 {input.cluster_results} | seqkit grep -f - -w 0 {input.combined} > {output.representatives} \
+            2> {log.err}
+        """
+
+# Step 24a: Build bowtie2 index for all-contig cluster representatives
+rule build_all_contig_cluster_index:
+    input:
+        representatives="results/14_all_contig_cluster/3_cluster_fasta/all_contigs_cluster_representatives.fasta"
+    output:
+        flag="results/14_all_contig_cluster/4_bowtie_index/cluster_index.done"
+    conda: "envs/bowtie2.yaml"
+    log:
+        out="log/24_build_all_contig_index/build_all_contig_cluster_index.log",
+        err="log/24_build_all_contig_index/build_all_contig_cluster_index.err"
+    threads: config["cluster_index_build"]["threads"]
+    resources:
+        slurm_partition=config["cluster_index_build"]["partition"],
+        runtime=config["cluster_index_build"]["runtime"],
+        mem_mb_per_cpu=config["cluster_index_build"]["mem_mb_per_cpu"],
+        cpus_per_task=config["cluster_index_build"]["threads"],
+        slurm_account=config["slurm_account"]
+    shell:
+        """
+        mkdir -p results/14_all_contig_cluster/4_bowtie_index
+        mkdir -p log/24_build_all_contig_index
+
+        bowtie2-build {input.representatives} results/14_all_contig_cluster/4_bowtie_index/cluster_index \
             > {log.out} 2> {log.err}
+
+        touch {output.flag}
+        """
+
+# Step 24b: Map each sample's reads to the all-contig cluster representatives
+rule bowtie2_alignment_all_contigs:
+    input:
+        r1="results/1_fastp/{sample}/{sample}_1P.fq.gz",
+        r2="results/1_fastp/{sample}/{sample}_2P.fq.gz",
+        index_flag="results/14_all_contig_cluster/4_bowtie_index/cluster_index.done"
+    output:
+        bam="results/15_all_contig_bowtie2/{sample}/{sample}.f2.sorted.bam",
+        bam_index="results/15_all_contig_bowtie2/{sample}/{sample}.f2.sorted.bam.bai"
+    conda: "envs/bowtie2_samtools.yaml"
+    threads: config["bowtie2_alignment"]["threads"]
+    log:
+        out="log/25_bowtie2_alignment_all_contigs/{sample}_bowtie2_alignment_all_contigs.log",
+        err="log/25_bowtie2_alignment_all_contigs/{sample}_bowtie2_alignment_all_contigs.err"
+    resources:
+        slurm_partition=config["bowtie2_alignment"]["partition"],
+        runtime=config["bowtie2_alignment"]["runtime"],
+        mem_mb_per_cpu=config["bowtie2_alignment"]["mem_mb_per_cpu"],
+        cpus_per_task=config["bowtie2_alignment"]["threads"],
+        slurm_account=config["slurm_account"]
+    shell:
+        """
+        mkdir -p results/15_all_contig_bowtie2/{wildcards.sample}
+        mkdir -p log/25_bowtie2_alignment_all_contigs
+
+        bowtie2 --sensitive -t -p {threads} \
+            -x results/14_all_contig_cluster/4_bowtie_index/cluster_index \
+            -1 {input.r1} -2 {input.r2} \
+            -S results/15_all_contig_bowtie2/{wildcards.sample}/{wildcards.sample}.sam \
+            > {log.out} 2> {log.err}
+
+        samtools view -@ {threads} -hbS -f 2 results/15_all_contig_bowtie2/{wildcards.sample}/{wildcards.sample}.sam \
+        | samtools sort -@ {threads} -o {output.bam} - \
+            >> {log.out} 2>> {log.err}
+
+        samtools index -@ {threads} {output.bam} \
+            >> {log.out} 2>> {log.err}
+
+        rm -f results/15_all_contig_bowtie2/{wildcards.sample}/{wildcards.sample}.sam
+        """
+
+# Step 24c: Calculate abundance for all-contig clusters
+rule calculate_abundance_all_contigs:
+    input:
+        bam="results/15_all_contig_bowtie2/{sample}/{sample}.f2.sorted.bam",
+        bam_index="results/15_all_contig_bowtie2/{sample}/{sample}.f2.sorted.bam.bai"
+    output:
+        tpm="results/15_all_contig_bowtie2/{sample}/{sample}_TPM.tsv",
+        mean="results/15_all_contig_bowtie2/{sample}/{sample}_mean.tsv",
+        read_count="results/15_all_contig_bowtie2/{sample}/{sample}_count.tsv"
+    conda: "envs/coverm.yaml"
+    threads: config["coverm"]["threads"]
+    log:
+        out="log/26_coverm_all_contigs/{sample}_calculate_abundance_all_contigs.log",
+        err="log/26_coverm_all_contigs/{sample}_calculate_abundance_all_contigs.err"
+    resources:
+        slurm_partition=config["coverm"]["partition"],
+        runtime=config["coverm"]["runtime"],
+        mem_mb_per_cpu=config["coverm"]["mem_mb_per_cpu"],
+        cpus_per_task=config["coverm"]["threads"],
+        slurm_account=config["slurm_account"]
+    shell:
+        """
+        mkdir -p log/26_coverm_all_contigs
+
+        coverm contig -m tpm \
+            --bam-files {input.bam} \
+            --min-read-percent-identity 95 \
+            --min-read-aligned-percent 90 \
+            --output-file {output.tpm} \
+            --contig-end-exclusion 0 \
+            --no-zeros -t {threads} \
+            > {log.out} 2> {log.err}
+
+        coverm contig -m mean \
+            --bam-files {input.bam} \
+            --min-read-percent-identity 95 \
+            --min-read-aligned-percent 90 \
+            --output-file {output.mean} \
+            --contig-end-exclusion 0 \
+            --no-zeros -t {threads} \
+            >> {log.out} 2>> {log.err}
+
+        coverm contig -m count \
+            --bam-files {input.bam} \
+            --min-read-percent-identity 95 \
+            --min-read-aligned-percent 90 \
+            --output-file {output.read_count} \
+            --contig-end-exclusion 0 \
+            --no-zeros -t {threads} \
+            >> {log.out} 2>> {log.err}
         """

@@ -1,0 +1,8 @@
+name: tree_build
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - mafft
+  - trimal
+  - iqtree=2

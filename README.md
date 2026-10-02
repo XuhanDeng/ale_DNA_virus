@@ -50,21 +50,21 @@ Raw reads (FASTQ)
 - Conda / Mamba
 - SLURM cluster
 
-### Tools (managed via Conda environments in `envs/`)
+### Tools (managed via Conda environments in `workflow/envs/`)
 
 | Tool | Purpose | Conda env |
 | ---- | ------- | --------- |
-| fastp | Read QC | `envs/fastp.yaml` |
-| SPAdes | Assembly | `envs/spades.yaml` |
-| seqkit | Sequence filtering/extraction | `envs/seqkit.yaml` |
-| GeNomad | Viral identification & taxonomy | `envs/genomad.yaml` |
-| VirSorter2 | Viral identification | `envs/vs2.yaml` |
-| CheckV | Viral genome quality | `envs/checkv.yaml` |
-| BLAST + Python | ANI-based clustering | `envs/checkv.yaml` |
-| Bowtie2 | Read alignment | `envs/bowtie2.yaml` |
-| Samtools | BAM processing | `envs/bowtie2_samtools.yaml` |
-| CoverM | Abundance calculation | `envs/coverm.yaml` |
-| iPHoP | Host prediction | `envs/iphop.yaml` |
+| fastp | Read QC | `workflow/envs/fastp.yaml` |
+| SPAdes | Assembly | `workflow/envs/spades.yaml` |
+| seqkit | Sequence filtering/extraction | `workflow/envs/seqkit.yaml` |
+| GeNomad | Viral identification & taxonomy | `workflow/envs/genomad.yaml` |
+| VirSorter2 | Viral identification | `workflow/envs/vs2.yaml` |
+| CheckV | Viral genome quality | `workflow/envs/checkv.yaml` |
+| BLAST + Python | ANI-based clustering | `workflow/envs/checkv.yaml` |
+| Bowtie2 | Read alignment | `workflow/envs/bowtie2.yaml` |
+| Samtools | BAM processing | `workflow/envs/bowtie2_samtools.yaml` |
+| CoverM | Abundance calculation | `workflow/envs/coverm.yaml` |
+| iPHoP | Host prediction | `workflow/envs/iphop.yaml` |
 
 ## Input
 
@@ -78,7 +78,7 @@ input/
 
 ## Configuration
 
-All parameters are set in `profiles/config.yaml`. Key settings to update before running:
+All parameters are set in `config/config.yaml`. Key settings to update before running:
 
 ```yaml
 # List your sample names
@@ -96,9 +96,9 @@ virsorter2:
   database: "path/to/virsorter2_db"
 
 # Script paths
-merge_script: "script/merge_viral_identification.py"
-checkv_filter_script: "script/Second_filter.py"
-checkv_scripts: "script/checkv"
+merge_script: "workflow/scripts/merge_viral_identification.py"
+checkv_filter_script: "workflow/scripts/Second_filter.py"
+checkv_scripts: "workflow/scripts/checkv"
 ```
 
 ### Key filtering parameters
@@ -112,34 +112,38 @@ checkv_scripts: "script/checkv"
 
 ## iPHoP Database Setup
 
-Before running host prediction, download and set up the iPHoP database using `iphop_establish.smk`. This is a one-time setup step.
+Before running host prediction, download and set up the iPHoP database using `workflow/iphop_establish.smk`. This is a one-time setup step.
 
 ```bash
-snakemake --snakefile iphop_establish.smk --profile profiles/
+snakemake --snakefile workflow/iphop_establish.smk --profile config/slurm/
 ```
 
 What it does:
 
 1. Creates `database/iphop/` and `database/iphop_test/` directories
-2. Downloads `iPHoP_db_Jun25_rw` from NERSC portal
+2. Downloads `iPHoP.latest_rw` from NERSC portal (the current published version's actual
+   directory name, e.g. `Jun_2025_pub_rw`, may differ from this download alias and will
+   change whenever NERSC publishes a new "latest" release)
 3. Verifies MD5 checksum integrity
 4. Extracts the database archive
 
-The downloaded database path should match `iphop.database` in `profiles/config.yaml`:
+The downloaded database path should match `iphop.database` in `config/config.yaml`. Check the
+end of `log/iphop_establish/download.err` (it reports "The database has been put in ...") to
+confirm the actual extracted directory name before setting this:
 
 ```yaml
 iphop:
-  database: "database/iphop/iPHoP_db_Jun25_rw"
+  database: "database/iphop/Jun_2025_pub_rw"
 ```
 
 ## Running the Pipeline
 
 ```bash
 # Dry run (check pipeline graph without executing)
-snakemake -n --profile profiles/
+snakemake -s workflow/Snakefile --configfile config/config.yaml -n --profile config/slurm/
 
-# Submit to SLURM (uses settings in profiles/config.yaml)
-bash submit_snakemake.sh
+# Submit to SLURM (see RUN_COMMANDS.md for the full command)
+snakemake -s workflow/Snakefile --configfile config/config.yaml --profile config/slurm/
 ```
 
 The profile enables: SLURM executor, up to 50 concurrent jobs, Conda environments, and automatic re-run of incomplete jobs.
@@ -218,7 +222,7 @@ Two complementary viral identification tools are run in parallel on the filtered
 
 ### Step 10 — Merge and Pre-filter Viral Results (`merge_viral_results`)
 
-Outputs from GeNomad and VirSorter2 are merged using a custom Python script (`script/merge_viral_identification.py`). Sequences are retained if detected by either tool. The merged result table and a list of candidate viral contig IDs are written for the next step.
+Outputs from GeNomad and VirSorter2 are merged using a custom Python script (`workflow/scripts/merge_viral_identification.py`). Sequences are retained if detected by either tool. The merged result table and a list of candidate viral contig IDs are written for the next step.
 
 | Parameter | Value | Config key |
 | --------- | ----- | ---------- |
@@ -249,7 +253,7 @@ CheckV evaluates the completeness and quality of each candidate viral contig, id
 
 ### Step 13 — Second Filter (`python_checkv_filter`)
 
-A second round of filtering is applied using `script/Second_filter.py`, integrating CheckV quality results with the original GeNomad and VirSorter2 scores. Each tool's results are filtered independently using the criteria below, then the passing sequences are union-merged. This removes low-confidence predictions and produces per-tool filtered tables plus a final extraction list.
+A second round of filtering is applied using `workflow/scripts/Second_filter.py`, integrating CheckV quality results with the original GeNomad and VirSorter2 scores. Each tool's results are filtered independently using the criteria below, then the passing sequences are union-merged. This removes low-confidence predictions and produces per-tool filtered tables plus a final extraction list.
 
 | Filter | Criterion | Description |
 | ------ | --------- | ----------- |
@@ -259,7 +263,7 @@ A second round of filtering is applied using `script/Second_filter.py`, integrat
 | GeNomad hallmark | `n_hallmarks > 0` | Requires at least one hallmark gene |
 | CheckV viral genes | `viral_genes > 0` | Requires at least one viral gene called by CheckV |
 
-These thresholds are hard-coded in `script/Second_filter.py` and are not controlled by `profiles/config.yaml`.
+These thresholds are hard-coded in `workflow/scripts/Second_filter.py` and are not controlled by `config/config.yaml`.
 
 **Retention logic is OR (union):** a sequence is kept if it passes the criteria for **any one** of the three tools — it does NOT need to satisfy all three. For example, a contig with `viral_genes > 0` in CheckV alone is sufficient for retention, even if it was not detected by VirSorter2 or GeNomad.
 
@@ -338,11 +342,13 @@ GeNomad is run in `annotate` mode on the cluster representative sequences to ass
 
 ### Step 21 — Host Prediction (`iphop_host_prediction`)
 
+Run separately via `workflow/3_annotation_host_prediction.smk` (see `RUN_COMMANDS.md`), since it only depends on the viral cluster representatives and has no downstream consumers in the main pipeline.
+
 iPHoP predicts the bacterial or archaeal host for each viral cluster representative by integrating CRISPR spacer matching, alignment to reference genomes, and sequence composition. Results are written to `results/13_host_prediction/iphop/`.
 
 | Parameter | Value | Config key |
 | --------- | ----- | ---------- |
-| Database | iPHoP_db_Jun25_rw | `iphop.database` |
+| Database | Jun_2025_pub_rw (extracted from `iPHoP.latest_rw` download) | `iphop.database` |
 | Threads | 32 | `iphop.threads` |
 
 ## Clustering Method

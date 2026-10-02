@@ -4,4 +4,4 @@ channels:
   - bioconda
 dependencies:
   - python=3.8
-  - iphop
+  - iphop=1.4.2

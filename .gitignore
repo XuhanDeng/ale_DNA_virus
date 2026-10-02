@@ -1,10 +1,6 @@
 # macOS
 .DS_Store
 
-# Excluded pipeline files
-Snakefile_runed.smk
-freshwater_viral_conservation_snakemake/
-
 # Databases and large data
 database/
 results/
@@ -14,3 +10,13 @@ conda_envs/
 
 # Snakemake internals
 .snakemake/
+
+# Local scratch / test outputs
+input_fake/
+result_fake/
+result_local/
+iphop/
+TerL_tree.treefile
+test.sh
+prompt/
+workflow/phylogenetic_tree
